@@ -1,0 +1,145 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Night Lane Racer</title>
+<style>
+:root{--bg:#e9ecef;--ink:#1c2230;--road:#3a4150;--line:#f2f4f7;--grass:#7fa86b;--accent:#e8402a;--panel:#ffffff;
+box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#10141c;--ink:#e8ecf3;--road:#262c38;--line:#c9ced8;--grass:#2f4a3a;--panel:#1b212d}}
+:root[data-theme="dark"]{--bg:#10141c;--ink:#e8ecf3;--road:#262c38;--line:#c9ced8;--grass:#2f4a3a;--panel:#1b212d}
+*{box-sizing:border-box}
+html,body{height:100%;margin:0}
+body{background:var(--bg);color:var(--ink);font-family:"Trebuchet MS","Segoe UI",Arial,sans-serif;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:10px;padding:8px;touch-action:manipulation}
+.hud{display:flex;gap:18px;font-size:18px;font-weight:700}
+.wrap{position:relative;width:min(92vw,340px);aspect-ratio:340/520}
+canvas{width:100%;height:100%;display:block;border-radius:10px;background:var(--grass)}
+.overlay{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:10px;text-align:center;background:rgba(10,14,22,.62);color:#fff;border-radius:10px;padding:16px}
+.overlay h1{margin:0;font-size:30px}
+.overlay p{margin:0;max-width:240px;line-height:1.4}
+button{font:inherit;font-weight:700;border:0;border-radius:8px;padding:10px 22px;background:var(--accent);color:#fff;cursor:pointer}
+button:focus-visible{outline:3px solid #fff;outline-offset:2px}
+.pad{display:flex;gap:12px}
+.pad button{width:92px;font-size:24px;background:var(--panel);color:var(--ink);border:2px solid var(--road)}
+.hidden{display:none}
+</style>
+</head>
+<body>
+<div class="hud"><span>Score: <span id="score">0</span></span><span>Best: <span id="best">0</span></span></div>
+<div class="wrap">
+  <canvas id="c" width="340" height="520" aria-label="Car racing game"></canvas>
+  <div class="overlay" id="ov">
+    <h1 id="ovTitle">Night Lane Racer</h1>
+    <p id="ovMsg">Dodge the traffic. Steer with the arrow keys, A / D, or the buttons below.</p>
+    <button id="go">Start</button>
+  </div>
+</div>
+<div class="pad"><button id="L" aria-label="Move left">&#9664;</button><button id="R" aria-label="Move right">&#9654;</button></div>
+<script>
+(function(){
+var cv=document.getElementById('c'),ctx=cv.getContext('2d');
+var W=340,H=520,LANES=4,ROAD_X=30,ROAD_W=280,LW=ROAD_W/LANES;
+var CW=34,CH=60;
+var scoreEl=document.getElementById('score'),bestEl=document.getElementById('best');
+var ov=document.getElementById('ov'),ovTitle=document.getElementById('ovTitle'),ovMsg=document.getElementById('ovMsg'),goBtn=document.getElementById('go');
+var best=0;
+try{best=parseInt(localStorage.getItem('nlr-best'),10)||0;}catch(e){}
+bestEl.textContent=best;
+
+var state='ready',player,cars,speed,score,dash,spawnT,last,keys={};
+var colors=['#2f7de1','#f2b705','#7b5cd6','#1fa67a','#d6457a','#e07b1f'];
+
+function laneX(l){return ROAD_X+l*LW+LW/2;}
+function reset(){
+  player={lane:1,x:laneX(1),target:laneX(1)};
+  cars=[];speed=200;score=0;dash=0;spawnT=0;
+  scoreEl.textContent=0;
+}
+function steer(d){
+  if(state!=='play')return;
+  player.lane=Math.max(0,Math.min(LANES-1,player.lane+d));
+  player.target=laneX(player.lane);
+}
+function start(){reset();state='play';ov.classList.add('hidden');last=performance.now();requestAnimationFrame(loop);}
+function crash(){
+  state='over';
+  var s=Math.floor(score);
+  if(s>best){best=s;bestEl.textContent=best;try{localStorage.setItem('nlr-best',best);}catch(e){}}
+  ovTitle.textContent='Crash!';
+  ovMsg.textContent='You scored '+s+'. Best: '+best+'.';
+  goBtn.textContent='Race again';
+  ov.classList.remove('hidden');goBtn.focus();
+}
+function spawn(){
+  var lane=Math.floor(Math.random()*LANES);
+  // keep one lane free near the top so the run is always passable
+  var blocked={};
+  cars.forEach(function(c){if(c.y<160)blocked[c.lane]=1;});
+  blocked[lane]=1;
+  if(Object.keys(blocked).length>=LANES)return;
+  var slow=0.45+Math.random()*0.35;
+  cars.push({lane:lane,x:laneX(lane),y:-CH,color:colors[Math.floor(Math.random()*colors.length)],rel:slow});
+}
+function hit(a,b){return Math.abs(a.x-b.x)<CW-4&&Math.abs(a.y-b.y)<CH-6;}
+function loop(t){
+  if(state!=='play')return;
+  var dt=Math.min(0.04,(t-last)/1000);last=t;
+  speed=Math.min(520,speed+dt*6);
+  score+=dt*speed/20;
+  scoreEl.textContent=Math.floor(score);
+  dash=(dash+speed*dt)%60;
+  player.x+=(player.target-player.x)*Math.min(1,dt*14);
+  spawnT-=dt;
+  if(spawnT<=0){spawn();spawnT=Math.max(0.35,1.0-speed/700);}
+  var py=H-CH-24,p={x:player.x,y:py};
+  for(var i=cars.length-1;i>=0;i--){
+    var c=cars[i];c.y+=speed*c.rel*dt+speed*0.5*dt;
+    if(c.y>H+CH){cars.splice(i,1);continue;}
+    if(hit(p,c)){draw();crash();return;}
+  }
+  draw();
+  requestAnimationFrame(loop);
+}
+function css(n){return getComputedStyle(document.documentElement).getPropertyValue(n).trim();}
+function car(x,y,color,up){
+  ctx.save();ctx.translate(x,y);
+  ctx.fillStyle='rgba(0,0,0,.25)';ctx.fillRect(-CW/2+3,-CH/2+4,CW,CH);
+  ctx.fillStyle=color;ctx.beginPath();ctx.roundRect(-CW/2,-CH/2,CW,CH,8);ctx.fill();
+  ctx.fillStyle='rgba(20,28,40,.85)';
+  var wy=up?-CH/2+12:CH/2-26;
+  ctx.beginPath();ctx.roundRect(-CW/2+5,wy,CW-10,14,3);ctx.fill();
+  ctx.fillStyle='rgba(255,255,255,.35)';ctx.fillRect(-CW/2+3,-CH/2+2,4,6);ctx.fillRect(CW/2-7,-CH/2+2,4,6);
+  ctx.restore();
+}
+function draw(){
+  ctx.fillStyle=css('--grass');ctx.fillRect(0,0,W,H);
+  ctx.fillStyle=css('--road');ctx.fillRect(ROAD_X,0,ROAD_W,H);
+  ctx.fillStyle=css('--line');
+  ctx.fillRect(ROAD_X-4,0,4,H);ctx.fillRect(ROAD_X+ROAD_W,0,4,H);
+  for(var l=1;l<LANES;l++){
+    for(var y=-60+dash;y<H;y+=60)ctx.fillRect(ROAD_X+l*LW-2,y,4,30);
+  }
+  cars.forEach(function(c){car(c.x,c.y,c.color,false);});
+  car(player.x,H-CH-24,'#e8402a',true);
+}
+document.addEventListener('keydown',function(e){
+  var k=e.key;
+  if(k==='ArrowLeft'||k==='a'||k==='A'){steer(-1);e.preventDefault();}
+  else if(k==='ArrowRight'||k==='d'||k==='D'){steer(1);e.preventDefault();}
+  else if((k==='Enter'||k===' ')&&state!=='play'&&document.activeElement!==goBtn){start();e.preventDefault();}
+});
+document.getElementById('L').addEventListener('click',function(){steer(-1);});
+document.getElementById('R').addEventListener('click',function(){steer(1);});
+var tx=null;
+cv.addEventListener('touchstart',function(e){tx=e.touches[0].clientX;},{passive:true});
+cv.addEventListener('touchend',function(e){
+  if(tx===null)return;var dx=e.changedTouches[0].clientX-tx;
+  if(Math.abs(dx)>20)steer(dx>0?1:-1);tx=null;
+},{passive:true});
+goBtn.addEventListener('click',start);
+reset();draw();
+})();
+</script>
+</body>
+</html>
